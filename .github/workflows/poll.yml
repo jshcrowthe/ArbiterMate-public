@@ -4,7 +4,8 @@
 # publishes the feed companions download (the "feed" release).
 #
 # Started only from outside: cron-job.org calls GitHub's API (a workflow_dispatch) at
-# 17 past every hour (UTC), and it can be run by hand. Nothing here schedules or
+# 33 past every hour (UTC), 7 minutes after Blizzard publishes its hourly snapshots
+# (at about :26), and it can be run by hand. Nothing here schedules or
 # starts another run.
 name: Poll
 
