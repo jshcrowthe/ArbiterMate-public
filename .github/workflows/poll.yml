@@ -10,18 +10,18 @@ on:
     - cron: "17 * * * *"
   workflow_dispatch:
 
-# One run at a time, none dropped: each carries the last one's state forward.
-concurrency:
-  group: poll
-  cancel-in-progress: false
-
 permissions:
   contents: write
+  actions: write
 
 jobs:
   poll:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # One poll at a time, none dropped: each carries the last one's state forward.
+    concurrency:
+      group: poll
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -58,3 +58,34 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add STATUS
           git diff --cached --quiet || { git commit -m "Status $(date -u +%F)"; git push; }
+
+  # GitHub's schedule can start late or not at all, so each run also starts the next:
+  # this job waits for the next :17 and dispatches a poll (a dispatch from the run's own
+  # token is the one event that still starts a workflow). A newer waiter replaces an
+  # older one, so there is only ever one, and it lets a poll the schedule already
+  # started stand in for its own.
+  next:
+    needs: poll
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    concurrency:
+      group: poll-next
+      cancel-in-progress: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Wait for the next hour's poll
+        run: |
+          now=$(date -u +%s)
+          at=$(( now / 3600 * 3600 + 17 * 60 ))
+          while [ $(( at - now )) -lt 600 ]; do at=$(( at + 3600 )); done
+          echo "Next poll at $(date -u -d @$at +%H:%M) UTC"
+          sleep $(( at - now ))
+
+      - name: Start it unless the schedule did
+        run: |
+          since=$(date -u -d '-20 minutes' +%FT%TZ)
+          started=$(gh run list -R "$GITHUB_REPOSITORY" -w poll.yml -L 5 --json createdAt,databaseId \
+            --jq "[.[] | select(.createdAt > \"$since\" and .databaseId != $GITHUB_RUN_ID)] | length")
+          if [ "$started" = "0" ]; then gh workflow run poll.yml -R "$GITHUB_REPOSITORY"; else echo "Already started."; fi
