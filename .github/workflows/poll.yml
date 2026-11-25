@@ -2,17 +2,17 @@
 # Hourly: reads every WoW Forever auction house with the server ArbiterMate's CI
 # deployed (the "server" release), carrying each house's state from run to run, and
 # publishes the feed companions download (the "feed" release).
-# Runs at 17 past every hour (UTC); GitHub may start it a few minutes late.
+#
+# Started only from outside: cron-job.org calls GitHub's API (a workflow_dispatch) at
+# 17 past every hour (UTC), and it can be run by hand. Nothing here schedules or
+# starts another run.
 name: Poll
 
 on:
-  schedule:
-    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   poll:
@@ -24,9 +24,8 @@ jobs:
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Get the server and the last run's state
         run: |
           gh release download server -p arbitermate-server
@@ -47,45 +46,3 @@ jobs:
           gh release view feed >/dev/null 2>&1 || gh release create feed --latest=false --title "Feed" \
             --notes "Hourly sales feed for ArbiterMate companions (feed.json), and the poller's state."
           gh release upload feed feed.json state.tar.gz --clobber
-
-      # GitHub turns schedules off in a repository with no commits for 60 days: a
-      # one-line status, committed once a day, keeps this one running.
-      - name: Daily status
-        run: |
-          [ "$(date -u +%H)" = "00" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ] || exit 0
-          echo "$(date -u +%FT%TZ) $(cat status.txt)" > STATUS
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add STATUS
-          git diff --cached --quiet || { git commit -m "Status $(date -u +%F)"; git push; }
-
-  # GitHub's schedule can start late or not at all, so each run also starts the next:
-  # this job waits for the next :17 and dispatches a poll (a dispatch from the run's own
-  # token is the one event that still starts a workflow). A newer waiter replaces an
-  # older one, so there is only ever one, and it lets a poll the schedule already
-  # started stand in for its own.
-  next:
-    needs: poll
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    concurrency:
-      group: poll-next
-      cancel-in-progress: true
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - name: Wait for the next hour's poll
-        run: |
-          now=$(date -u +%s)
-          at=$(( now / 3600 * 3600 + 17 * 60 ))
-          while [ $(( at - now )) -lt 600 ]; do at=$(( at + 3600 )); done
-          echo "Next poll at $(date -u -d @$at +%H:%M) UTC"
-          sleep $(( at - now ))
-
-      - name: Start it unless the schedule did
-        run: |
-          since=$(date -u -d '-20 minutes' +%FT%TZ)
-          started=$(gh run list -R "$GITHUB_REPOSITORY" -w poll.yml -L 5 --json createdAt,databaseId \
-            --jq "[.[] | select(.createdAt > \"$since\" and .databaseId != $GITHUB_RUN_ID)] | length")
-          if [ "$started" = "0" ]; then gh workflow run poll.yml -R "$GITHUB_REPOSITORY"; else echo "Already started."; fi
