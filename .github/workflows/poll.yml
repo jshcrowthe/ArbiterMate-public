@@ -1,0 +1,59 @@
+# Deployed from ArbiterMate (server/data-repo); edit it there.
+# Hourly: reads every WoW Forever auction house with the server ArbiterMate's CI
+# deployed (the "server" release), carrying each house's state from run to run, and
+# publishes the feed companions download (the "feed" release).
+name: Poll
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+# One run at a time, none dropped: each carries the last one's state forward.
+concurrency:
+  group: poll
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get the server and the last run's state
+        run: |
+          gh release download server -p arbitermate-server
+          chmod +x arbitermate-server
+          mkdir -p state
+          if gh release download feed -p state.tar.gz; then tar xzf state.tar.gz; fi
+
+      - name: Poll every auction house
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+          BLIZZARD_REGION: ${{ vars.BLIZZARD_REGION || 'us' }}
+        run: ./arbitermate-server state feed.json | tee status.txt
+
+      - name: Publish the feed
+        run: |
+          tar czf state.tar.gz state
+          gh release view feed >/dev/null 2>&1 || gh release create feed --latest=false --title "Feed" \
+            --notes "Hourly sales feed for ArbiterMate companions (feed.json), and the poller's state."
+          gh release upload feed feed.json state.tar.gz --clobber
+
+      # GitHub turns schedules off in a repository with no commits for 60 days: a
+      # one-line status, committed once a day, keeps this one running.
+      - name: Daily status
+        run: |
+          [ "$(date -u +%H)" = "00" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ] || exit 0
+          echo "$(date -u +%FT%TZ) $(cat status.txt)" > STATUS
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add STATUS
+          git diff --cached --quiet || { git commit -m "Status $(date -u +%F)"; git push; }
