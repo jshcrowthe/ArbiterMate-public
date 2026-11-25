@@ -1,4 +1,4 @@
-# Deployed from ArbiterMate (server/data-repo); edit it there.
+# Deployed from ArbiterMate (server/public-repo); edit it there.
 # Hourly: reads every WoW Forever auction house with the server ArbiterMate's CI
 # deployed (the "server" release), carrying each house's state from run to run, and
 # publishes the feed companions download (the "feed" release).
