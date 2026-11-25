@@ -2,6 +2,7 @@
 # Hourly: reads every WoW Forever auction house with the server ArbiterMate's CI
 # deployed (the "server" release), carrying each house's state from run to run, and
 # publishes the feed companions download (the "feed" release).
+# Runs at 17 past every hour (UTC); GitHub may start it a few minutes late.
 name: Poll
 
 on:
